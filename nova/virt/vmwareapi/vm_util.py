@@ -57,8 +57,11 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
     config_spec.name = instance['uuid']
     config_spec.guestId = os_type
 
-    # Allow nested ESX instances to host 64 bit VMs.
-    if os_type == "vmkernel5Guest":
+    # Allow nested instances to host 64 bit VMs.
+    nested_hv_enabled_os_list = ["vmkernel5Guest", "ubuntu64Guest", "centos64Guest"]
+    nested_hv_enabled = False
+    if nested_hv_enabled_os_list.index(os_type) > -1:
+        nested_hv_enabled = True
         config_spec.nestedHVEnabled = "True"
 
     vm_file_info = client_factory.create('ns0:VirtualMachineFileInfo')
@@ -100,6 +103,17 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
             opt.value = vif_info['iface_id']
             extra_config.append(opt)
             i += 1
+	
+	# Allow nested instances to host 64 bit VMs.
+	if nested_hv_enabled:
+        opt_vcpu = client_factory.create('ns0:OptionValue')
+        opt_vcpu.key = "vcpu.hotadd"
+        opt_vcpu.value = "FALSE"
+        opt_featMask = client_factory.create('ns0:OptionValue')
+        opt_featMask.key = "featMask.vm.hv.capable"
+        opt_featMask.value = "Min:1"
+        extra_config.append(opt_vcpu)
+        extra_config.append(opt_featMask)
 
     config_spec.extraConfig = extra_config
 
