@@ -65,6 +65,8 @@ class PathUtils(object):
 
     def get_root_vhd_path(self, instance_name, format_ext):
         instance_path = self.get_instance_dir(instance_name)
+        if not instance_path:
+            instance_path = self.get_instances_dir()
         return os.path.join(instance_path, 'root.' + format_ext)
 
     def get_ephemeral_vhd_path(self, instance_name, format_ext):

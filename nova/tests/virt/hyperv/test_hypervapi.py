@@ -414,7 +414,7 @@ class HyperVAPITestCase(test.NoDBTestCase):
                                              mox.IsA(str))
         m.WithSideEffects(self._add_ide_disk)
 
-    def _test_spawn_config_drive(self, use_cdrom):
+    def _test_spawn_config_drive(self, use_cdrom, config_drive_error=False):
         self.flags(force_config_drive=True)
         self.flags(config_drive_cdrom=use_cdrom, group='hyperv')
         self.flags(mkisofs_cmd='mkisofs.exe')
@@ -429,13 +429,19 @@ class HyperVAPITestCase(test.NoDBTestCase):
         self._test_spawn_instance(expected_ide_disks=expected_ide_disks,
                                   expected_ide_dvds=expected_ide_dvds,
                                   config_drive=True,
-                                  use_cdrom=use_cdrom)
+                                  use_cdrom=use_cdrom,
+                                  config_drive_error=config_drive_error)
 
     def test_spawn_config_drive(self):
         self._test_spawn_config_drive(False)
 
     def test_spawn_config_drive_cdrom(self):
         self._test_spawn_config_drive(True)
+
+    def test_spawn_config_drive_format_error(self):
+        cdrom_format = 'erred_format'
+        CONF.set_override('config_drive_format', cdrom_format)
+        self._test_spawn_config_drive(True, True)
 
     def test_spawn_no_config_drive(self):
         self.flags(force_config_drive=False)
@@ -855,10 +861,14 @@ class HyperVAPITestCase(test.NoDBTestCase):
                                                self._user_id)
 
     def _spawn_instance(self, cow, block_device_info=None,
-                        ephemeral_storage=False):
+                        ephemeral_storage=False, config_drive_error=False,
+                        instance=None):
         self.flags(use_cow_images=cow)
 
-        self._instance_data = self._get_instance_data()
+        if not config_drive_error:
+            self._instance_data = self._get_instance_data()
+        else:
+            self._instance_data = instance
         instance = db.instance_create(self._context, self._instance_data)
         instance['system_metadata'] = {}
 
@@ -869,10 +879,15 @@ class HyperVAPITestCase(test.NoDBTestCase):
 
         network_info = fake_network.fake_get_instance_nw_info(self.stubs)
 
-        self._conn.spawn(self._context, instance, image,
-                         injected_files=[], admin_password=None,
-                         network_info=network_info,
-                         block_device_info=block_device_info)
+        if not config_drive_error:
+            self._conn.spawn(self._context, instance, image,
+                             injected_files=[], admin_password=None,
+                             network_info=network_info,
+                             block_device_info=block_device_info)
+        else:
+            self.assertRaises(vmutils.HyperVException, self._conn.spawn,
+                              self._context, instance, image, [], None, 
+                              network_info, block_device_info)        
 
     def _add_ide_disk(self, vm_name, path, ctrller_addr,
                       drive_addr, drive_type):
@@ -978,7 +993,8 @@ class HyperVAPITestCase(test.NoDBTestCase):
 
             vhdutils.VHDUtils.resize_vhd(mox.IsA(str), mox.IsA(object))
 
-    def _setup_spawn_instance_mocks(self, cow, setup_vif_mocks_func=None,
+    def _setup_spawn_instance_mocks(self, cow, 
+                                    setup_vif_mocks_func=None,
                                     with_exception=False,
                                     block_device_info=None,
                                     boot_from_volume=False,
@@ -986,7 +1002,9 @@ class HyperVAPITestCase(test.NoDBTestCase):
                                     use_cdrom=False,
                                     admin_permissions=True,
                                     vhd_format=constants.DISK_FORMAT_VHD,
-                                    ephemeral_storage=False):
+                                    ephemeral_storage=False,
+                                    config_drive_error=False,
+                                    instance=None):
         m = vmutils.VMUtils.vm_exists(mox.IsA(str))
         m.WithSideEffects(self._set_vm_name).AndReturn(False)
 
@@ -995,13 +1013,18 @@ class HyperVAPITestCase(test.NoDBTestCase):
                                             remove_dir=True)
         m.AndReturn(self._test_instance_dir)
 
+        if config_drive_error:
+            m = fake.PathUtils.get_instance_dir(instance["name"])
+
         m = basevolumeutils.BaseVolumeUtils.volume_in_mapping(
             mox.IsA(str), block_device_info)
         m.AndReturn(boot_from_volume)
 
         if not boot_from_volume:
-            m = fake.PathUtils.get_instance_dir(mox.Func(self._check_vm_name))
-            m.AndReturn(self._test_instance_dir)
+            if not config_drive_error:
+                m = fake.PathUtils.get_instance_dir(
+                    mox.Func(self._check_vm_name))
+                m.AndReturn(self._test_instance_dir)
 
             self._setup_get_cached_image_mocks(cow, vhd_format)
 
@@ -1019,28 +1042,28 @@ class HyperVAPITestCase(test.NoDBTestCase):
                 vhdutils.VHDUtils.resize_vhd(mox.IsA(str), mox.IsA(object))
 
         self._setup_check_admin_permissions_mocks(
-                                          admin_permissions=admin_permissions)
-        if ephemeral_storage:
-            m = fake.PathUtils.get_instance_dir(mox.Func(self._check_vm_name))
-            m.AndReturn(self._test_instance_dir)
-            vhdutils.VHDUtils.create_dynamic_vhd(mox.IsA(str), mox.IsA(int),
-                                                 mox.IsA(str))
+            admin_permissions=admin_permissions)
+          
+        if not config_drive_error:
+            if ephemeral_storage:          
+                m = fake.PathUtils.get_instance_dir(
+                    mox.Func(self._check_vm_name))
+                m.AndReturn(self._test_instance_dir)
+                vhdutils.VHDUtils.create_dynamic_vhd(mox.IsA(str), 
+                                                     mox.IsA(int),
+                                                     mox.IsA(str))
+            if config_drive:
+                self._setup_spawn_config_drive_mocks(use_cdrom)
+            if with_exception:
+                self._setup_destroy_mocks()
+            else:
+                vmutils.VMUtils.set_vm_state(mox.Func(self._check_vm_name),
+                                             constants.HYPERV_VM_STATE_ENABLED)
 
         self._setup_create_instance_mocks(setup_vif_mocks_func,
                                           boot_from_volume,
                                           block_device_info,
                                           ephemeral_storage=ephemeral_storage)
-
-        if config_drive:
-            self._setup_spawn_config_drive_mocks(use_cdrom)
-
-        # TODO(alexpilotti) Based on where the exception is thrown
-        # some of the above mock calls need to be skipped
-        if with_exception:
-            self._setup_destroy_mocks()
-        else:
-            vmutils.VMUtils.set_vm_state(mox.Func(self._check_vm_name),
-                                         constants.HYPERV_VM_STATE_ENABLED)
 
     def _test_spawn_instance(self, cow=True,
                              expected_ide_disks=1,
@@ -1051,7 +1074,11 @@ class HyperVAPITestCase(test.NoDBTestCase):
                              use_cdrom=False,
                              admin_permissions=True,
                              vhd_format=constants.DISK_FORMAT_VHD,
-                             ephemeral_storage=False):
+                             ephemeral_storage=False, 
+                             config_drive_error=False):
+        instance = None
+        if config_drive_error:
+            instance = self._get_instance_data()
         self._setup_spawn_instance_mocks(cow,
                                          setup_vif_mocks_func,
                                          with_exception,
@@ -1059,18 +1086,23 @@ class HyperVAPITestCase(test.NoDBTestCase):
                                          use_cdrom=use_cdrom,
                                          admin_permissions=admin_permissions,
                                          vhd_format=vhd_format,
-                                         ephemeral_storage=ephemeral_storage)
+                                         ephemeral_storage=ephemeral_storage,
+                                         config_drive_error=config_drive_error,
+                                         instance=instance)
 
         self._mox.ReplayAll()
-        self._spawn_instance(cow, ephemeral_storage=ephemeral_storage)
+        self._spawn_instance(cow, ephemeral_storage=ephemeral_storage,
+                             config_drive_error=config_drive_error, 
+                             instance=instance)
         self._mox.VerifyAll()
 
-        self.assertEqual(len(self._instance_ide_disks), expected_ide_disks)
-        self.assertEqual(len(self._instance_ide_dvds), expected_ide_dvds)
+        if not config_drive_error:
+            self.assertEqual(len(self._instance_ide_disks), expected_ide_disks)
+            self.assertEqual(len(self._instance_ide_dvds), expected_ide_dvds)
 
-        vhd_path = os.path.join(self._test_instance_dir, 'root.' +
-                                vhd_format.lower())
-        self.assertEqual(vhd_path, self._instance_ide_disks[0])
+            vhd_path = os.path.join(self._test_instance_dir, 'root.' +
+                                    vhd_format.lower())
+            self.assertEqual(vhd_path, self._instance_ide_disks[0])
 
     def _mock_get_mounted_disk_from_lun(self, target_iqn, target_lun,
                                         fake_mounted_disk,
