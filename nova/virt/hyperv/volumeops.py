@@ -137,8 +137,15 @@ class VolumeOps(object):
                 #Find the SCSI controller for the vm
                 ctrller_path = self._vmutils.get_vm_scsi_controller(
                     instance_name)
-                slot = self._get_free_controller_slot(ctrller_path)
-
+                slot = 0
+                try:
+                    slot = self._get_mount_slot(mountpoint)
+                    #Todo check if slot is already occupied
+                except Exception:
+                    LOG.debug(_("Failed to extract mount slot from %s") 
+                              % mountpoint)                    
+                    slot = self._get_free_controller_slot(ctrller_path)
+                
             self._vmutils.attach_volume_to_controller(instance_name,
                                                       ctrller_path,
                                                       slot,
@@ -149,6 +156,10 @@ class VolumeOps(object):
                 self._volutils.logout_storage_target(target_iqn)
             raise vmutils.HyperVException(_('Unable to attach volume '
                                             'to instance %s') % instance_name)
+
+    def _get_mount_slot(self, mountpoint):
+        if re.match("^(/dev/sd){1}[b-z]$", mountpoint).group(0) is mountpoint:
+            return ord(mountpoint[-1]) - ord('b')
 
     def _get_free_controller_slot(self, scsi_controller_path):
         #Slots starts from 0, so the length of the disks gives us the free slot
