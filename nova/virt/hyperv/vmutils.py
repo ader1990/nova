@@ -18,6 +18,7 @@
 Utility class for VM related operations on Hyper-V.
 """
 
+import re
 import sys
 import time
 import uuid
@@ -261,7 +262,7 @@ class VMUtils(object):
         vm = self._lookup_vm_check(vm_name)
         return self._get_vm_ide_controller(vm, ctrller_addr)
 
-    def get_attached_disks_count(self, scsi_controller_path):
+    def get_attached_disks(self, scsi_controller_path):
         volumes = self._conn.query("SELECT * FROM %(class_name)s "
                                    "WHERE ResourceSubType = "
                                    "'%(res_sub_type)s' AND "
@@ -272,7 +273,23 @@ class VMUtils(object):
                                     self._PHYS_DISK_RES_SUB_TYPE,
                                     'parent':
                                     scsi_controller_path.replace("'", "''")})
-        return len(volumes)
+        return volumes
+
+    def is_free_controller_slot(self, scsi_controller_path, slot):
+        attached_volumes = self.get_attached_disks(scsi_controller_path)
+        for volume in attached_volumes:
+            if int(volume.AddressOnParent) == slot:
+                return False
+        return True
+
+    def get_controller_slot(self, mountpoint):
+        try:
+            match_mountpoint = re.match("^(/dev/sd){1}[b-z]$", mountpoint)
+            if match_mountpoint.group(0) is mountpoint:
+                return ord(mountpoint[-1]) - ord('b')
+        except Exception:
+            raise vmutils.HyperVException(_('Failed to extract slot from '
+                                            'mountpoint: %s') % mountpoint)
 
     def _get_new_setting_data(self, class_name):
         return self._conn.query("SELECT * FROM %s WHERE InstanceID "

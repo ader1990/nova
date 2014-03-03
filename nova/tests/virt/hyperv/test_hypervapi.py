@@ -163,7 +163,8 @@ class HyperVAPITestCase(test.NoDBTestCase):
         self._mox.StubOutWithMock(vmutils.VMUtils, 'set_nic_connection')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'get_vm_scsi_controller')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'get_vm_ide_controller')
-        self._mox.StubOutWithMock(vmutils.VMUtils, 'get_attached_disks_count')
+        self._mox.StubOutWithMock(vmutils.VMUtils, 'get_controller_slot')
+        self._mox.StubOutWithMock(vmutils.VMUtils, 'is_free_controller_slot')
         self._mox.StubOutWithMock(vmutils.VMUtils,
                                   'attach_volume_to_controller')
         self._mox.StubOutWithMock(vmutils.VMUtils,
@@ -1105,7 +1106,8 @@ class HyperVAPITestCase(test.NoDBTestCase):
                                              fake_device_number)
 
     def _mock_attach_volume(self, instance_name, target_iqn, target_lun,
-                            target_portal=None, boot_from_volume=False):
+                            target_portal=None, boot_from_volume=False,
+                            mountpoint='/dev/sdb'):
         fake_mounted_disk = "fake_mounted_disk"
         fake_device_number = 0
         fake_controller_path = 'fake_scsi_controller_path'
@@ -1128,8 +1130,12 @@ class HyperVAPITestCase(test.NoDBTestCase):
             m.AndReturn(fake_controller_path)
 
             fake_free_slot = 1
-            m = vmutils.VMUtils.get_attached_disks_count(fake_controller_path)
+            m = vmutils.VMUtils.get_controller_slot(mountpoint)
             m.AndReturn(fake_free_slot)
+
+            m = vmutils.VMUtils.is_free_controller_slot(fake_controller_path,
+                                                        fake_free_slot)
+            m.AndReturn(True)
 
         m = vmutils.VMUtils.attach_volume_to_controller(instance_name,
                                                         fake_controller_path,
@@ -1233,7 +1239,7 @@ class HyperVAPITestCase(test.NoDBTestCase):
         mount_point = '/dev/sdc'
 
         self._mock_attach_volume(instance_data['name'], target_iqn, target_lun,
-                                 target_portal)
+                                 target_portal, mountpoint=mount_point)
 
         self._mox.ReplayAll()
         self._conn.attach_volume(None, connection_info, instance_data,

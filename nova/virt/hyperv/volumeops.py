@@ -106,7 +106,8 @@ class VolumeOps(object):
             # Wait for the target to be mounted
             self._get_mounted_disk_from_lun(target_iqn, target_lun, True)
 
-    def attach_volume(self, connection_info, instance_name, ebs_root=False):
+    def attach_volume(self, connection_info, instance_name, ebs_root=False,
+                      mountpoint='/dev/sdb'):
         """Attach a volume to the SCSI controller or to the IDE controller if
         ebs_root is True
         """
@@ -135,7 +136,10 @@ class VolumeOps(object):
                 #Find the SCSI controller for the vm
                 ctrller_path = self._vmutils.get_vm_scsi_controller(
                     instance_name)
-                slot = self._get_free_controller_slot(ctrller_path)
+                slot = self._vmutils.get_controller_slot(mountpoint)
+                if not self._is_free_controller_slot(ctrller_path, slot):
+                    raise vmutils.HyperVException(_('Controller slot is not '
+                                                    'free: %d' % slot))
 
             self._vmutils.attach_volume_to_controller(instance_name,
                                                       ctrller_path,
@@ -148,9 +152,9 @@ class VolumeOps(object):
             raise vmutils.HyperVException(_('Unable to attach volume '
                                             'to instance %s') % instance_name)
 
-    def _get_free_controller_slot(self, scsi_controller_path):
-        #Slots starts from 0, so the length of the disks gives us the free slot
-        return self._vmutils.get_attached_disks_count(scsi_controller_path)
+    def _is_free_controller_slot(self, scsi_controller_path, address):
+        return self._vmutils.is_free_controller_slot(
+            scsi_controller_path, address)
 
     def detach_volumes(self, block_device_info, instance_name):
         mapping = driver.block_device_info_get_mapping(block_device_info)
